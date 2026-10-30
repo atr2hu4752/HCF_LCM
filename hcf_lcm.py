@@ -2,19 +2,20 @@ import streamlit as st
 import math
 import random
 import csv
+import io
 from functools import reduce
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
 
-# --- Page Configuration ---
+# --- Page Setup ---
 st.set_page_config(
     page_title="Math Quest: HCF & LCM",
     page_icon="🧮",
     layout="centered"
 )
 
-# --- Custom Styling for Primary School Kids ---
+# --- Custom Styling ---
 st.markdown("""
 <style>
     .main-title {
@@ -28,18 +29,18 @@ st.markdown("""
         background: #f8fafc;
         border: 2px dashed #94a3b8;
         border-radius: 18px;
-        padding: 20px;
+        padding: 22px;
         text-align: center;
         margin-bottom: 20px;
     }
     .badge {
         display: inline-block;
-        padding: 4px 14px;
+        padding: 5px 16px;
         border-radius: 20px;
         font-weight: 800;
         font-size: 0.85rem;
         color: white;
-        margin-bottom: 8px;
+        margin-bottom: 10px;
     }
     .badge-hcf { background-color: #4f46e5; }
     .badge-lcm { background-color: #059669; }
@@ -53,7 +54,7 @@ st.markdown("""
         background-color: #fffbeb;
         border: 1px solid #fef3c7;
         border-radius: 12px;
-        padding: 14px;
+        padding: 16px;
         color: #92400e;
         line-height: 1.6;
     }
@@ -83,7 +84,7 @@ def get_multiples(n, target_lcm, min_count=4):
             break
     return multiples
 
-# --- Procedural Question Generators (Numbers up to 100) ---
+# --- Procedural Question Generators ---
 def generate_hcf_problem(item_count):
     common_factors = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15, 16, 18, 20]
     g = random.choice(common_factors)
@@ -123,26 +124,35 @@ def generate_lcm_problem(item_count):
 
 def build_distractors(problem_type, numbers, correct_ans):
     options = {correct_ans}
+    candidates = set()
+
     if problem_type == "hcf":
         if correct_ans > 1:
-            options.add(1)
+            candidates.add(1)
         if correct_ans > 2:
-            options.add(correct_ans // 2)
-        options.add(correct_ans * 2)
-        options.add(max(1, correct_ans - 1))
+            candidates.add(correct_ans // 2)
+        candidates.add(correct_ans * 2)
+        candidates.add(max(1, correct_ans - 1))
     else:
-        options.add(gcd_multi(numbers))
-        options.add(max(numbers))
-        options.add(correct_ans * 2)
+        candidates.add(gcd_multi(numbers))
+        candidates.add(max(numbers))
+        candidates.add(correct_ans * 2)
         if correct_ans % 2 == 0 and (correct_ans // 2) >= max(numbers):
-            options.add(correct_ans // 2)
+            candidates.add(correct_ans // 2)
+
+    candidates = {c for c in candidates if c > 0 and c != correct_ans}
+    if len(candidates) >= 3:
+        options.update(random.sample(list(candidates), 3))
+    else:
+        options.update(candidates)
 
     while len(options) < 4:
-        delta = random.randint(1, 4) * (1 if problem_type == "hcf" else 10)
+        step = 1 if problem_type == "hcf" else 10
+        delta = random.randint(1, 4) * step
         val = max(1, correct_ans + (delta if random.random() > 0.5 else -delta))
         options.add(val)
 
-    opt_list = list(options)
+    opt_list = list(options)[:4]
     random.shuffle(opt_list)
     return opt_list
 
@@ -158,16 +168,11 @@ def create_new_question(concept, count_mode):
     q["options"] = build_distractors(q["type"], q["numbers"], q["answer"])
     return q
 
-# --- Session Saver to Desktop ---
-def save_session_to_desktop(logs, final_score, best_streak):
-    desktop_dir = Path.home() / "Desktop"
-    if not desktop_dir.exists():
-        desktop_dir = Path.home()
-
-    now_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    filename = f"Math_Quest_Session_{now_str}.csv"
-    filepath = desktop_dir / filename
-
+# --- CSV Reporting Helpers ---
+def build_csv_string(logs, final_score, best_streak):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
     total = len(logs)
     correct_count = sum(1 for q in logs if q["is_correct"])
     accuracy = round((correct_count / total) * 100) if total > 0 else 0
@@ -180,33 +185,45 @@ def save_session_to_desktop(logs, final_score, best_streak):
     elif accuracy >= 50:
         badge = "👍 Good Effort!"
 
-    with open(filepath, mode="w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
-        writer.writerow(["=== MATH QUEST: SESSION SUMMARY ==="])
-        writer.writerow(["Session Date & Time", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
-        writer.writerow(["Performance Level", badge])
-        writer.writerow(["Total Questions Answered", total])
-        writer.writerow(["Correct Answers", correct_count])
-        writer.writerow(["Incorrect Answers", total - correct_count])
-        writer.writerow(["Accuracy Rate", f"{accuracy}%"])
-        writer.writerow(["Final Score", final_score])
-        writer.writerow(["Best Streak", best_streak])
-        writer.writerow([])
-        writer.writerow(["=== DETAILED QUESTION BREAKDOWN ==="])
-        writer.writerow(["Question #", "Time", "Concept", "Numbers Given", "Input Mode", "Kid Answer", "Correct Answer", "Result"])
-        for q in logs:
-            writer.writerow([
-                q["q_num"],
-                q["time"],
-                q["concept"],
-                q["numbers"],
-                q["mode"],
-                q["user_answer"],
-                q["correct_answer"],
-                "CORRECT" if q["is_correct"] else "WRONG"
-            ])
+    writer.writerow(["=== MATH QUEST: SESSION SUMMARY ==="])
+    writer.writerow(["Session Date & Time", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+    writer.writerow(["Performance Level", badge])
+    writer.writerow(["Total Questions Answered", total])
+    writer.writerow(["Correct Answers", correct_count])
+    writer.writerow(["Incorrect Answers", total - correct_count])
+    writer.writerow(["Accuracy Rate", f"{accuracy}%"])
+    writer.writerow(["Final Score", final_score])
+    writer.writerow(["Best Streak", best_streak])
+    writer.writerow([])
+    writer.writerow(["=== DETAILED QUESTION BREAKDOWN ==="])
+    writer.writerow(["Question #", "Time", "Concept", "Numbers Given", "Input Mode", "Kid Answer", "Correct Answer", "Result"])
+    for q in logs:
+        writer.writerow([
+            q["q_num"],
+            q["time"],
+            q["concept"],
+            q["numbers"],
+            q["mode"],
+            q["user_answer"],
+            q["correct_answer"],
+            "CORRECT" if q["is_correct"] else "WRONG"
+        ])
 
-    return filepath, badge, accuracy, correct_count, total
+    return output.getvalue(), badge, accuracy, correct_count, total
+
+def save_session_to_disk(logs, final_score, best_streak):
+    csv_text, badge, accuracy, correct_count, total = build_csv_string(logs, final_score, best_streak)
+    
+    desktop_dir = Path.home() / "Desktop"
+    target_dir = desktop_dir if desktop_dir.exists() else Path.home()
+
+    now_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    filepath = target_dir / f"Math_Quest_Session_{now_str}.csv"
+    
+    with open(filepath, mode="w", newline="", encoding="utf-8-sig") as f:
+        f.write(csv_text)
+
+    return filepath, csv_text, badge, accuracy, correct_count, total
 
 # --- Session State Initialization ---
 if "score" not in st.session_state:
@@ -221,6 +238,8 @@ if "answered" not in st.session_state:
     st.session_state.answered = False
 if "feedback" not in st.session_state:
     st.session_state.feedback = None
+if "q_counter" not in st.session_state:
+    st.session_state.q_counter = 0
 if "current_question" not in st.session_state:
     st.session_state.current_question = create_new_question("HCF", "Random (2 or 3)")
 
@@ -247,7 +266,6 @@ number_count = st.sidebar.radio(
 
 st.sidebar.markdown("---")
 
-# Session Reset
 if st.sidebar.button("🔄 Start Fresh Session"):
     st.session_state.score = 0
     st.session_state.streak = 0
@@ -255,18 +273,19 @@ if st.sidebar.button("🔄 Start Fresh Session"):
     st.session_state.session_logs = []
     st.session_state.answered = False
     st.session_state.feedback = None
+    st.session_state.q_counter += 1
     st.session_state.current_question = create_new_question(concept, number_count)
     st.rerun()
 
-# --- Main App Header & Metrics ---
+# --- Main Metrics Header ---
 st.markdown('<div class="main-title">🧮 Math Quest: HCF & LCM</div>', unsafe_allow_html=True)
-st.caption("Sharpen your factor and multiple skills with numbers up to 100!")
+st.caption("Master Highest Common Factors & Lowest Common Multiples with numbers up to 100!")
 
-m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-m_col1.metric("⭐ Score", st.session_state.score)
-m_col2.metric("🔥 Streak", st.session_state.streak)
-m_col3.metric("🏆 Best Streak", st.session_state.best_streak)
-m_col4.metric("📝 Answered", len(st.session_state.session_logs))
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("⭐ Score", st.session_state.score)
+m2.metric("🔥 Streak", st.session_state.streak)
+m3.metric("🏆 Best Streak", st.session_state.best_streak)
+m4.metric("📝 Answered", len(st.session_state.session_logs))
 
 # --- Active Question Display ---
 q = st.session_state.current_question
@@ -283,7 +302,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- Answering Logic Helper ---
+# --- Answering Logic ---
 def record_answer(user_val):
     correct_ans = q["answer"]
     is_correct = (user_val == correct_ans)
@@ -307,7 +326,7 @@ def record_answer(user_val):
             st.session_state.best_streak = st.session_state.streak
         st.session_state.feedback = {
             "status": "correct",
-            "msg": f"🎉 Excellent! {st.session_state.streak} in a row!" if st.session_state.streak > 2 else "✨ Correct! Superb work!"
+            "msg": f"🎉 Excellent! {st.session_state.streak} in a row!" if st.session_state.streak > 2 else "✨ Correct! Outstanding work!"
         }
         if st.session_state.streak >= 3:
             st.balloons()
@@ -318,28 +337,34 @@ def record_answer(user_val):
             "msg": f"❌ Not quite! The correct answer was {correct_ans}. Check the step-by-step hint below!"
         }
 
-# --- Multiple Choice or Type In Forms ---
+# --- Choices / Input UI ---
 if not st.session_state.answered:
     if "Multiple Choice" in answer_mode:
         st.write("👉 **Choose the correct answer:**")
-        cols = st.columns(4)
-        for i, opt in enumerate(q["options"]):
-            if cols[i].button(str(opt), use_container_width=True, key=f"btn_opt_{opt}_{i}"):
+        cols = st.columns(len(q["options"]))
+        for i, (col, opt) in enumerate(zip(cols, q["options"])):
+            if col.button(str(opt), use_container_width=True, key=f"btn_opt_{st.session_state.q_counter}_{i}_{opt}"):
                 record_answer(opt)
                 st.rerun()
     else:
-        with st.form("typed_answer_form", clear_on_submit=False):
+        with st.form(f"typed_form_{st.session_state.q_counter}", clear_on_submit=False):
             st.write("👉 **Type your answer and press Check:**")
-            user_input = st.number_input("Your Answer", min_value=1, max_value=1000, step=1, value=None, placeholder="Type number here...")
+            user_input = st.number_input(
+                "Your Answer",
+                min_value=1,
+                max_value=2000,
+                step=1,
+                value=None,
+                placeholder="Type number here..."
+            )
             submit_btn = st.form_submit_button("Check ➜", use_container_width=True)
             if submit_btn:
                 if user_input is not None:
                     record_answer(int(user_input))
                     st.rerun()
                 else:
-                    st.warning("Please type a number before checking!")
+                    st.warning("Please enter a number before checking!")
 else:
-    # Display result alert
     if st.session_state.feedback["status"] == "correct":
         st.success(st.session_state.feedback["msg"])
     else:
@@ -348,10 +373,11 @@ else:
     if st.button("Next Question ➜", type="primary", use_container_width=True):
         st.session_state.answered = False
         st.session_state.feedback = None
+        st.session_state.q_counter += 1
         st.session_state.current_question = create_new_question(concept, number_count)
         st.rerun()
 
-# --- Visual Step-by-Step Helper ---
+# --- Hint Accordion ---
 with st.expander("💡 Need a hint? Show Step-by-Step Working", expanded=st.session_state.answered and st.session_state.feedback["status"] == "wrong"):
     if q["type"] == "hcf":
         factor_lists = [get_factors(n) for n in q["numbers"]]
@@ -362,7 +388,7 @@ with st.expander("💡 Need a hint? Show Step-by-Step Working", expanded=st.sess
         hint_md = ""
         for n, fl in zip(q["numbers"], factor_lists):
             hint_md += f"**Factors of {n}:** {', '.join(map(str, fl))}\n\n"
-        hint_md += f"**Shared Common Factors:** {', '.join(map(str, common_factors))}\n\n"
+        hint_md += f"**Shared Factors:** {', '.join(map(str, common_factors))}\n\n"
         hint_md += f"👉 The **highest** common factor is **{q['answer']}**!"
         st.markdown(f'<div class="hint-card">{hint_md}</div>', unsafe_allow_html=True)
     else:
@@ -376,23 +402,37 @@ with st.expander("💡 Need a hint? Show Step-by-Step Working", expanded=st.sess
 
 st.markdown("---")
 
-# --- Session Summary & Desktop Save Section ---
-col_save, col_clear = st.columns([2, 1])
+# --- Save Session / Download Report ---
+col_action1, col_action2 = st.columns([1, 1])
 
-with col_save:
-    if st.button("💾 Finish & Save Session to Desktop", use_container_width=True):
-        if len(st.session_state.session_logs) == 0:
-            st.warning("Answer a few questions before saving a session report!")
-        else:
-            saved_path, badge, acc, correct_c, total_q = save_session_to_desktop(
+if len(st.session_state.session_logs) > 0:
+    csv_content, badge_name, acc_val, cor_val, tot_val = build_csv_string(
+        st.session_state.session_logs,
+        st.session_state.score,
+        st.session_state.best_streak
+    )
+    
+    with col_action1:
+        st.download_button(
+            label="⬇️ Download Session CSV Report",
+            data=csv_content.encode("utf-8-sig"),
+            file_name=f"Math_Quest_Session_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+    with col_action2:
+        if st.button("💾 Save to Desktop / Server Disk", use_container_width=True):
+            filepath, _, _, _, _ = save_session_to_disk(
                 st.session_state.session_logs,
                 st.session_state.score,
                 st.session_state.best_streak
             )
-            st.success(f"✅ Session report saved to Desktop:\n`{saved_path.name}`")
-            st.info(f"**Level:** {badge} | **Accuracy:** {acc}% ({correct_c}/{total_q})")
+            st.success(f"File written to: `{filepath}`")
+else:
+    st.info("Complete a few questions to unlock the session report download.")
 
-# --- Performance Log Table ---
+# --- Real-Time Performance Table ---
 if len(st.session_state.session_logs) > 0:
     with st.expander("📊 View This Session's Question Log"):
         df = pd.DataFrame(st.session_state.session_logs)
